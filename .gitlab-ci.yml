@@ -8,6 +8,7 @@ variables:
 
 search_instance:
   stage: search_instance
+  image: $KUBECTL
   script:
     - echo "Starting search for instance $INSTANCE_NAME in EDCO cluster."
     - |
@@ -36,9 +37,13 @@ search_instance:
   artifacts:
     reports:
       dotenv: variables.env
+  except:
+    - pushes
+    - merge_requests
 
 collect_data:
   stage: collect_data
+  image: $KUBECTL
   dependencies:
     - search_instance
   script:
@@ -61,6 +66,9 @@ collect_data:
       - pod_description.txt
       - pod_logs.txt
       - redis.conf
+  except:
+    - pushes
+    - merge_requests
 
 compile_output:
   stage: compile_output
@@ -81,3 +89,8 @@ compile_output:
   artifacts:
     paths:
       - consolidated_report.txt
+  tags:
+    - shared
+  except:
+    - pushes
+    - merge_requests
