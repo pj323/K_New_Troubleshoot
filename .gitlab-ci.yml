@@ -94,3 +94,6 @@ compile_output:
   except:
     - pushes
     - merge_requests
+
+
+    sed -i 's/\(server-[0-2]\).*/\1/' found_pods.txt
