@@ -1,99 +1,89 @@
 stages:
-  - search_instance
-  - collect_data
-  - compile_output
+  - search-pod
+  - collect-data
 
 variables:
-  INSTANCE_NAME: "<input_instance_name>"
+  INSTANCE_NAME: "adham05"
 
-search_instance:
-  stage: search_instance
-  image: $KUBECTL
+namespaces:
+  # List of namespaces and their associated runners
+  - { name: "cache-test", runner: "cache-utility-test" }
+  - { name: "cache-prod", runner: "cache-utility-edco" }
+  - { name: "tp2-edco-prod-a", runner: "tp2-edco-prod-a" }
+  - { name: "tp2-edco-prod-b", runner: "tp2-edco-prod-b" }
+
+# Dynamically generate search jobs for each namespace
+search_pods:
+  stage: search-pod
   script:
-    - echo "Starting search for instance $INSTANCE_NAME in EDCO cluster."
     - |
-      NAMESPACES=("cache-prep" "cache-test" "cache-utility" "cache-utility-edco" "tp2-edco-cache-test-b" "tp2-edco-cache-test-c" "tp2-edco-cache-test-d")
-      RUNNERS=("cache-utility-test" "cache-utility-test" "cache-utility-test" "cache-utility-edco" "tp2-edco-cache-test-b" "tp2-edco-cache-test-c" "tp2-edco-cache-test-d")
-      FOUND=false
-      for i in "${!NAMESPACES[@]}"; do
-        NAMESPACE=${NAMESPACES[$i]}
-        RUNNER=${RUNNERS[$i]}
-        echo "Checking namespace $NAMESPACE using runner $RUNNER."
-        # Execute kubectl command using the runner to check for the instance
-        if kubectl get pods -n $NAMESPACE | grep $INSTANCE_NAME; then
-          echo "Instance $INSTANCE_NAME found in namespace $NAMESPACE."
-          echo "NAMESPACE_FOUND=$NAMESPACE" >> variables.env
-          echo "RUNNER_FOUND=$RUNNER" >> variables.env
-          FOUND=true
-          break
-        else
-          echo "Instance $INSTANCE_NAME not found in namespace $NAMESPACE."
+      echo "Searching for pods matching $INSTANCE_NAME in $NAMESPACE namespace"
+
+      kubectl get pods -n $NAMESPACE | grep $INSTANCE_NAME | grep -E 'server-0|server-1|server-2' > found_pods_$NAMESPACE.txt || true
+
+      if [[ -s found_pods_$NAMESPACE.txt ]]; then
+        echo "Pods found in $NAMESPACE:"
+        cat found_pods_$NAMESPACE.txt
+      else
+        echo "No pods found in $NAMESPACE"
+      fi
+  tags:
+    - $RUNNER
+  artifacts:
+    paths:
+      - found_pods_$NAMESPACE.txt
+    when: always
+  except:
+    - pushes
+    - merge_requests
+  variables:
+    NAMESPACE: "${name}"
+    RUNNER: "${runner}"
+  parallel:
+    matrix:
+      - name: "cache-test"
+        runner: "cache-utility-test"
+      - name: "cache-prod"
+        runner: "cache-utility-edco"
+      - name: "tp2-edco-prod-a"
+        runner: "tp2-edco-prod-a"
+      - name: "tp2-edco-prod-b"
+        runner: "tp2-edco-prod-b"
+
+# Collect data for found pods
+collect_data:
+  stage: collect-data
+  needs:
+    - job: search_pods
+      artifacts: true
+  script:
+    - |
+      for FILE in found_pods_*.txt; do
+        NAMESPACE=$(echo $FILE | cut -d'_' -f3 | cut -d'.' -f1)
+        if [[ -s $FILE ]]; then
+          while read -r POD_NAME; do
+            echo "Collecting data for $POD_NAME in $NAMESPACE"
+            # Fetch ConfigMap details
+            kubectl get configmap -n $NAMESPACE -o yaml > "${NAMESPACE}_configmap.yaml" || true
+            # Fetch StatefulSet details
+            kubectl get sts -n $NAMESPACE -o yaml > "${NAMESPACE}_sts.yaml" || true
+            # Fetch pod description
+            kubectl describe pod $POD_NAME -n $NAMESPACE > "${POD_NAME}_description.txt" || true
+            # Fetch last 1-hour logs
+            kubectl logs $POD_NAME -n $NAMESPACE --since=1h > "${POD_NAME}_logs.txt" || true
+            # Collect redis.conf
+            kubectl exec -n $NAMESPACE $POD_NAME -- cat /path/to/redis.conf > "${POD_NAME}_redis.conf" || true
+          done < $FILE
         fi
       done
-      if [ "$FOUND" = false ]; then
-        echo "Instance $INSTANCE_NAME not found in any namespace in EDCO cluster."
-        exit 1
-      fi
-  artifacts:
-    reports:
-      dotenv: variables.env
-  except:
-    - pushes
-    - merge_requests
-
-collect_data:
-  stage: collect_data
-  image: $KUBECTL
-  dependencies:
-    - search_instance
-  script:
-    - source variables.env
-    - echo "Collecting data for instance $INSTANCE_NAME in namespace $NAMESPACE_FOUND using runner $RUNNER_FOUND."
-    - echo "Fetching ConfigMap details..."
-    - kubectl get configmap -n $NAMESPACE_FOUND -o yaml > configmap.yaml
-    - echo "Fetching StatefulSet details..."
-    - kubectl get sts -n $NAMESPACE_FOUND -o yaml > sts.yaml
-    - echo "Fetching pod resource details..."
-    - kubectl describe pod $INSTANCE_NAME -n $NAMESPACE_FOUND > pod_description.txt
-    - echo "Fetching last 1-hour logs..."
-    - kubectl logs $INSTANCE_NAME -n $NAMESPACE_FOUND --since=1h > pod_logs.txt
-    - echo "Collecting redis.conf..."
-    - kubectl exec -n $NAMESPACE_FOUND $INSTANCE_NAME -- cat /path/to/redis.conf > redis.conf
-  artifacts:
-    paths:
-      - configmap.yaml
-      - sts.yaml
-      - pod_description.txt
-      - pod_logs.txt
-      - redis.conf
-  except:
-    - pushes
-    - merge_requests
-
-compile_output:
-  stage: compile_output
-  dependencies:
-    - collect_data
-  script:
-    - echo "Compiling output into consolidated_report.txt"
-    - cat configmap.yaml > consolidated_report.txt
-    - echo -e "\n---\n" >> consolidated_report.txt
-    - cat sts.yaml >> consolidated_report.txt
-    - echo -e "\n---\n" >> consolidated_report.txt
-    - cat pod_description.txt >> consolidated_report.txt
-    - echo -e "\n---\n" >> consolidated_report.txt
-    - cat redis.conf >> consolidated_report.txt
-    - echo -e "\n---\n" >> consolidated_report.txt
-    - echo "Last 1-hour logs:" >> consolidated_report.txt
-    - cat pod_logs.txt >> consolidated_report.txt
-  artifacts:
-    paths:
-      - consolidated_report.txt
   tags:
-    - shared
+    - common-runner
+  artifacts:
+    paths:
+      - "*.yaml"
+      - "*.txt"
+      - "*.conf"
+    when: always
   except:
     - pushes
     - merge_requests
-
-
-    sed -i 's/\(server-[0-2]\).*/\1/' found_pods.txt
