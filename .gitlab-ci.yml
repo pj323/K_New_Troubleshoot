@@ -390,3 +390,4 @@ Redis
 )​(
 GitHub
 ). Additionally, Redis 6.2.14 includes fixes for crashes related to memory overflows and various other stability improvements​
+https://redis.io/docs/latest/operate/rs/release-notes/rs-6-2-12/
