@@ -1,109 +1,15 @@
 stages:
   - search-pod
-  - collect-data
-
-variables:
-  INSTANCE_NAME: "adham05"
-
-namespaces:
-  # List of namespaces and their associated runners
-  - { name: "cache-test", runner: "cache-utility-test" }
-  - { name: "cache-prod", runner: "cache-utility-edco" }
-  - { name: "tp2-edco-prod-a", runner: "tp2-edco-prod-a" }
-  - { name: "tp2-edco-prod-b", runner: "tp2-edco-prod-b" }
-
-# Dynamically generate search jobs for each namespace
-search_pods:
-  stage: search-pod
-  script:
-    - |
-      echo "Searching for pods matching $INSTANCE_NAME in $NAMESPACE namespace"
-
-      kubectl get pods -n $NAMESPACE | grep $INSTANCE_NAME | grep -E 'server-0|server-1|server-2' > found_pods_$NAMESPACE.txt || true
-
-      if [[ -s found_pods_$NAMESPACE.txt ]]; then
-        echo "Pods found in $NAMESPACE:"
-        cat found_pods_$NAMESPACE.txt
-      else
-        echo "No pods found in $NAMESPACE"
-      fi
-  tags:
-    - $RUNNER
-  artifacts:
-    paths:
-      - found_pods_$NAMESPACE.txt
-    when: always
-  except:
-    - pushes
-    - merge_requests
-  variables:
-    NAMESPACE: "${name}"
-    RUNNER: "${runner}"
-  parallel:
-    matrix:
-      - name: "cache-test"
-        runner: "cache-utility-test"
-      - name: "cache-prod"
-        runner: "cache-utility-edco"
-      - name: "tp2-edco-prod-a"
-        runner: "tp2-edco-prod-a"
-      - name: "tp2-edco-prod-b"
-        runner: "tp2-edco-prod-b"
-
-# Collect data for found pods
-collect_data:
-  stage: collect-data
-  needs:
-    - job: search_pods
-      artifacts: true
-  script:
-    - |
-      for FILE in found_pods_*.txt; do
-        NAMESPACE=$(echo $FILE | cut -d'_' -f3 | cut -d'.' -f1)
-        if [[ -s $FILE ]]; then
-          while read -r POD_NAME; do
-            echo "Collecting data for $POD_NAME in $NAMESPACE"
-            # Fetch ConfigMap details
-            kubectl get configmap -n $NAMESPACE -o yaml > "${NAMESPACE}_configmap.yaml" || true
-            # Fetch StatefulSet details
-            kubectl get sts -n $NAMESPACE -o yaml > "${NAMESPACE}_sts.yaml" || true
-            # Fetch pod description
-            kubectl describe pod $POD_NAME -n $NAMESPACE > "${POD_NAME}_description.txt" || true
-            # Fetch last 1-hour logs
-            kubectl logs $POD_NAME -n $NAMESPACE --since=1h > "${POD_NAME}_logs.txt" || true
-            # Collect redis.conf
-            kubectl exec -n $NAMESPACE $POD_NAME -- cat /path/to/redis.conf > "${POD_NAME}_redis.conf" || true
-          done < $FILE
-        fi
-      done
-  tags:
-    - common-runner
-  artifacts:
-    paths:
-      - "*.yaml"
-      - "*.txt"
-      - "*.conf"
-    when: always
-  except:
-    - pushes
-    - merge_requests
-
-
-
-
-
-stages:
-  - search-pod
   - fetch-configmap
+  - fetch-sts
   - collect-data
 
 variables:
   INSTANCE_NAME: "your-instance-name"  # Replace with the actual instance name
   CACHE_TEST_NAMESPACE: "cache-test"
-  CACHE_PROD_NAMESPACE: "cache-prod"
   TP2_EDCO_CACHE_TEST_A_NAMESPACE: "tp2-edco-cache-test-a"
   # Add other namespace variables as needed
-  KUBECTL: "appropriate-kubectl-image"  # Replace with your kubectl image
+  KUBECTL: "registry.sfgitlab.opr.statefarm.org/registry/sfcommon/kubectl"  # Replace with your kubectl image
 
 # Stage 1: Search for pods in cache-test namespace
 search_pods_cache_test:
@@ -185,8 +91,9 @@ fetch_configmap_cache_test:
     paths:
       - redis_conf_output_cache_test.txt
     when: always
-  rules:
-    - if: '$CI_JOB_STATUS == "success"'
+  except:
+    - pushes
+    - merge_requests
 
 # Stage 2: Fetch ConfigMap for tp2-edco-cache-test-a namespace
 fetch_configmap_tp2_cache_test_a:
@@ -218,10 +125,81 @@ fetch_configmap_tp2_cache_test_a:
     paths:
       - redis_conf_output_tp2_cache_test_a.txt
     when: always
-  rules:
-    - if: '$CI_JOB_STATUS == "success"'
+  except:
+    - pushes
+    - merge_requests
 
-# Stage 3: Collect data from found pods
+# Stage 3: Fetch StatefulSet for cache-test namespace
+fetch_sts_cache_test:
+  image: $KUBECTL
+  stage: fetch-sts
+  needs:
+    - job: fetch_configmap_cache_test
+      artifacts: true
+  script:
+    - |
+      if [[ -s found_pods_cache_test.txt ]]; then
+        echo "Fetching StatefulSet details for $INSTANCE_NAME in $CACHE_TEST_NAMESPACE namespace"
+        STS_NAME=$(kubectl get sts -n $CACHE_TEST_NAMESPACE | grep "$INSTANCE_NAME-test-redis-ha-server" | awk '{print $1}')
+
+        if [[ ! -z "$STS_NAME" ]]; then
+          echo "Found StatefulSet: $STS_NAME"
+          kubectl get sts $STS_NAME -n $CACHE_TEST_NAMESPACE -o json > sts_output_cache_test.json
+          # Parsing the container details using jq
+          echo "Parsing the StatefulSet container details"
+          jq '{name: .metadata.name, replicas: .spec.replicas, containers: [.spec.template.spec.containers[] | {name: .name, image: .image, resources: .resources}]}' sts_output_cache_test.json > parsed_sts_output_cache_test.json
+        else
+          echo "No StatefulSet found for $INSTANCE_NAME in $CACHE_TEST_NAMESPACE namespace"
+        fi
+      else
+        echo "No pods found in $CACHE_TEST_NAMESPACE namespace; skipping StatefulSet fetch"
+      fi
+  tags:
+    - cache-utility-test
+  artifacts:
+    paths:
+      - parsed_sts_output_cache_test.json
+    when: always
+  except:
+    - pushes
+    - merge_requests
+
+# Stage 3: Fetch StatefulSet for tp2-edco-cache-test-a namespace
+fetch_sts_tp2_cache_test_a:
+  image: $KUBECTL
+  stage: fetch-sts
+  needs:
+    - job: fetch_configmap_tp2_cache_test_a
+      artifacts: true
+  script:
+    - |
+      if [[ -s found_pods_tp2_cache_test_a.txt ]]; then
+        echo "Fetching StatefulSet details for $INSTANCE_NAME in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace"
+        STS_NAME=$(kubectl get sts -n $TP2_EDCO_CACHE_TEST_A_NAMESPACE | grep "$INSTANCE_NAME-cache-redis" | awk '{print $1}')
+
+        if [[ ! -z "$STS_NAME" ]]; then
+          echo "Found StatefulSet: $STS_NAME"
+          kubectl get sts $STS_NAME -n $TP2_EDCO_CACHE_TEST_A_NAMESPACE -o json > sts_output_tp2_cache_test_a.json
+          # Parsing the container details using jq
+          echo "Parsing the StatefulSet container details"
+          jq '{name: .metadata.name, replicas: .spec.replicas, containers: [.spec.template.spec.containers[] | {name: .name, image: .image, resources: .resources}]}' sts_output_tp2_cache_test_a.json > parsed_sts_output_tp2_cache_test_a.json
+        else
+          echo "No StatefulSet found for $INSTANCE_NAME in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace"
+        fi
+      else
+        echo "No pods found in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace; skipping StatefulSet fetch"
+      fi
+  tags:
+    - tp2-edco-cache-test-a
+  artifacts:
+    paths:
+      - parsed_sts_output_tp2_cache_test_a.json
+    when: always
+  except:
+    - pushes
+    - merge_requests
+
+# Stage 4: Collect data and produce consolidated output
 collect_data:
   image: $KUBECTL
   stage: collect-data
@@ -230,36 +208,97 @@ collect_data:
       artifacts: true
     - job: search_pods_tp2_cache_test_a
       artifacts: true
-    # Add other search_pods jobs as needed
+    - job: fetch_configmap_cache_test
+      artifacts: true
+    - job: fetch_configmap_tp2_cache_test_a
+      artifacts: true
+    - job: fetch_sts_cache_test
+      artifacts: true
+    - job: fetch_sts_tp2_cache_test_a
+      artifacts: true
   script:
     - |
+      echo "Generating consolidated report..."
+      echo "Consolidated Report for $INSTANCE_NAME" > consolidated_report.txt
+      echo "=====================================" >> consolidated_report.txt
+      echo "" >> consolidated_report.txt
+
+      # Section 1: Pods Found in Namespaces
+      echo "Pods Found in Namespaces:" >> consolidated_report.txt
       for FILE in found_pods_*.txt; do
+        NAMESPACE=$(echo $FILE | sed 's/found_pods_\(.*\)\.txt/\1/')
         if [[ -s $FILE ]]; then
-          NAMESPACE=$(echo $FILE | sed 's/found_pods_\(.*\)\.txt/\1/')
-          echo "Processing pods in namespace: $NAMESPACE"
+          echo "- Namespace: $NAMESPACE" >> consolidated_report.txt
+          echo "  Pods:" >> consolidated_report.txt
           while read -r POD_NAME; do
-            echo "Collecting data for $POD_NAME in $NAMESPACE"
-            # Fetch pod description
-            kubectl describe pod $POD_NAME -n $NAMESPACE > "${POD_NAME}_description.txt" || true
-            # Fetch last 1-hour logs
-            kubectl logs $POD_NAME -n $NAMESPACE --since=1h > "${POD_NAME}_logs.txt" || true
-            # Collect redis.conf from the pod
-            kubectl exec -n $NAMESPACE $POD_NAME -- cat /path/to/redis.conf > "${POD_NAME}_redis.conf" || true
+            echo "    - $POD_NAME" >> consolidated_report.txt
           done < $FILE
         else
-          echo "No pods found in $FILE"
+          echo "- Namespace: $NAMESPACE" >> consolidated_report.txt
+          echo "  No pods found matching $INSTANCE_NAME" >> consolidated_report.txt
+        fi
+        echo "" >> consolidated_report.txt
+      done
+
+      # Section 2: ConfigMap Details
+      echo "ConfigMap Details:" >> consolidated_report.txt
+      for CONFIGMAP_FILE in redis_conf_output_*.txt; do
+        NAMESPACE=$(echo $CONFIGMAP_FILE | sed 's/redis_conf_output_\(.*\)\.txt/\1/')
+        if [[ -s $CONFIGMAP_FILE ]]; then
+          echo "- Namespace: $NAMESPACE" >> consolidated_report.txt
+          echo "  redis.conf Section:" >> consolidated_report.txt
+          cat $CONFIGMAP_FILE >> consolidated_report.txt
+        else
+          echo "- Namespace: $NAMESPACE" >> consolidated_report.txt
+          echo "  No redis.conf section found or file is empty" >> consolidated_report.txt
+        fi
+        echo "" >> consolidated_report.txt
+      done
+
+      # Section 3: StatefulSet Details
+      echo "StatefulSet Details:" >> consolidated_report.txt
+      for STS_FILE in parsed_sts_output_*.json; do
+        NAMESPACE=$(echo $STS_FILE | sed 's/parsed_sts_output_\(.*\)\.json/\1/')
+        if [[ -s $STS_FILE ]]; then
+          echo "- Namespace: $NAMESPACE" >> consolidated_report.txt
+          echo "  StatefulSet Details:" >> consolidated_report.txt
+          cat $STS_FILE | jq '.' >> consolidated_report.txt
+        else
+          echo "- Namespace: $NAMESPACE" >> consolidated_report.txt
+          echo "  No StatefulSet found or file is empty" >> consolidated_report.txt
+        fi
+        echo "" >> consolidated_report.txt
+      done
+
+      # Section 4: Pod Descriptions and Logs
+      echo "Pod Descriptions and Logs:" >> consolidated_report.txt
+      for FILE in found_pods_*.txt; do
+        NAMESPACE=$(echo $FILE | sed 's/found_pods_\(.*\)\.txt/\1/')
+        if [[ -s $FILE ]]; then
+          while read -r POD_NAME; do
+            echo "- Pod: $POD_NAME in Namespace: $NAMESPACE" >> consolidated_report.txt
+            echo "  Description:" >> consolidated_report.txt
+            kubectl describe pod $POD_NAME -n $NAMESPACE >> consolidated_report.txt || echo "Error fetching description for $POD_NAME" >> consolidated_report.txt
+            echo "" >> consolidated_report.txt
+            echo "  Last 1-Hour Logs:" >> consolidated_report.txt
+            kubectl logs $POD_NAME -n $NAMESPACE --since=1h >> consolidated_report.txt || echo "Error fetching logs for $POD_NAME" >> consolidated_report.txt
+            echo "" >> consolidated_report.txt
+            echo "  redis.conf Content from Pod:" >> consolidated_report.txt
+            kubectl exec -n $NAMESPACE $POD_NAME -- cat /path/to/redis.conf >> consolidated_report.txt || echo "Error fetching redis.conf from $POD_NAME" >> consolidated_report.txt
+            echo "" >> consolidated_report.txt
+          done < $FILE
         fi
       done
   tags:
     - common-runner  # Use an appropriate runner for collecting data
   artifacts:
     paths:
-      - "*.txt"
-      - "*.conf"
+      - consolidated_report.txt
     when: always
   except:
     - pushes
     - merge_requests
+
 
 
 
