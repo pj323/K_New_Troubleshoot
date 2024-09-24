@@ -260,3 +260,85 @@ collect_data:
   except:
     - pushes
     - merge_requests
+
+
+
+    collect_data:
+  image: $KUBECTL
+  stage: collect-data
+  needs:
+    - job: search_pods_cache_test
+      artifacts: true
+    - job: search_pods_tp2_cache_test_a
+      artifacts: true
+    - job: fetch_configmap_cache_test
+      artifacts: true
+    - job: fetch_configmap_tp2_cache_test_a
+      artifacts: true
+  script:
+    - |
+      echo "Generating consolidated report..."
+      echo "Consolidated Report for $INSTANCE_NAME" > consolidated_report.txt
+      echo "=====================================" >> consolidated_report.txt
+      echo "" >> consolidated_report.txt
+
+      # Section 1: Pods Found in Namespaces
+      echo "Pods Found in Namespaces:" >> consolidated_report.txt
+      for FILE in found_pods_*.txt; do
+        NAMESPACE=$(echo $FILE | sed 's/found_pods_\(.*\)\.txt/\1/')
+        if [[ -s $FILE ]]; then
+          echo "- Namespace: $NAMESPACE" >> consolidated_report.txt
+          echo "  Pods:" >> consolidated_report.txt
+          while read -r POD_NAME; do
+            echo "    - $POD_NAME" >> consolidated_report.txt
+          done < $FILE
+        else
+          echo "- Namespace: $NAMESPACE" >> consolidated_report.txt
+          echo "  No pods found matching $INSTANCE_NAME" >> consolidated_report.txt
+        fi
+        echo "" >> consolidated_report.txt
+      done
+
+      # Section 2: ConfigMap Details
+      echo "ConfigMap Details:" >> consolidated_report.txt
+      for CONFIGMAP_FILE in redis_conf_output_*.txt; do
+        NAMESPACE=$(echo $CONFIGMAP_FILE | sed 's/redis_conf_output_\(.*\)\.txt/\1/')
+        if [[ -s $CONFIGMAP_FILE ]]; then
+          echo "- Namespace: $NAMESPACE" >> consolidated_report.txt
+          echo "  redis.conf Section:" >> consolidated_report.txt
+          cat $CONFIGMAP_FILE >> consolidated_report.txt
+        else
+          echo "- Namespace: $NAMESPACE" >> consolidated_report.txt
+          echo "  No redis.conf section found or file is empty" >> consolidated_report.txt
+        fi
+        echo "" >> consolidated_report.txt
+      done
+
+      # Section 3: Pod Descriptions and Logs
+      echo "Pod Descriptions and Logs:" >> consolidated_report.txt
+      for FILE in found_pods_*.txt; do
+        NAMESPACE=$(echo $FILE | sed 's/found_pods_\(.*\)\.txt/\1/')
+        if [[ -s $FILE ]]; then
+          while read -r POD_NAME; do
+            echo "- Pod: $POD_NAME in Namespace: $NAMESPACE" >> consolidated_report.txt
+            echo "  Description:" >> consolidated_report.txt
+            kubectl describe pod $POD_NAME -n $NAMESPACE >> consolidated_report.txt || echo "Error fetching description for $POD_NAME" >> consolidated_report.txt
+            echo "" >> consolidated_report.txt
+            echo "  Last 1-Hour Logs:" >> consolidated_report.txt
+            kubectl logs $POD_NAME -n $NAMESPACE --since=1h >> consolidated_report.txt || echo "Error fetching logs for $POD_NAME" >> consolidated_report.txt
+            echo "" >> consolidated_report.txt
+            echo "  redis.conf Content from Pod:" >> consolidated_report.txt
+            kubectl exec -n $NAMESPACE $POD_NAME -- cat /path/to/redis.conf >> consolidated_report.txt || echo "Error fetching redis.conf from $POD_NAME" >> consolidated_report.txt
+            echo "" >> consolidated_report.txt
+          done < $FILE
+        fi
+      done
+  tags:
+    - common-runner  # Use an appropriate runner for collecting data
+  artifacts:
+    paths:
+      - consolidated_report.txt
+    when: always
+  except:
+    - pushes
+    - merge_requests
