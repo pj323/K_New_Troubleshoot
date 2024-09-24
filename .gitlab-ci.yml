@@ -381,3 +381,12 @@ collect_data:
   except:
     - pushes
     - merge_requests
+
+
+
+
+    the newer releases (like 6.2.12) include several bug fixes and optimizations that could improve your setup's stability, such as better memory management, Lua script garbage collection fixes, and race condition resolutions​(
+Redis
+)​(
+GitHub
+). Additionally, Redis 6.2.14 includes fixes for crashes related to memory overflows and various other stability improvements​
