@@ -87,3 +87,176 @@ collect_data:
   except:
     - pushes
     - merge_requests
+
+
+
+
+
+stages:
+  - search-pod
+  - fetch-configmap
+  - collect-data
+
+variables:
+  INSTANCE_NAME: "your-instance-name"  # Replace with the actual instance name
+  CACHE_TEST_NAMESPACE: "cache-test"
+  CACHE_PROD_NAMESPACE: "cache-prod"
+  TP2_EDCO_CACHE_TEST_A_NAMESPACE: "tp2-edco-cache-test-a"
+  # Add other namespace variables as needed
+  KUBECTL: "appropriate-kubectl-image"  # Replace with your kubectl image
+
+# Stage 1: Search for pods in cache-test namespace
+search_pods_cache_test:
+  image: $KUBECTL
+  stage: search-pod
+  script:
+    - |
+      echo "Searching for pods matching $INSTANCE_NAME in $CACHE_TEST_NAMESPACE namespace"
+      kubectl get pods -n $CACHE_TEST_NAMESPACE | grep $INSTANCE_NAME | grep -E 'server-0|server-1|server-2' > found_pods_cache_test.txt || true
+
+      if [[ -s found_pods_cache_test.txt ]]; then
+        echo "Pods matching $INSTANCE_NAME found in $CACHE_TEST_NAMESPACE namespace:"
+        cat found_pods_cache_test.txt
+      else
+        echo "No pods matching $INSTANCE_NAME found in $CACHE_TEST_NAMESPACE namespace"
+      fi
+  tags:
+    - cache-utility-test
+  artifacts:
+    paths:
+      - found_pods_cache_test.txt
+    when: always
+  except:
+    - pushes
+    - merge_requests
+
+# Stage 1: Search for pods in tp2-edco-cache-test-a namespace
+search_pods_tp2_cache_test_a:
+  image: $KUBECTL
+  stage: search-pod
+  script:
+    - |
+      echo "Searching for pods matching $INSTANCE_NAME in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace"
+      kubectl get pods -n $TP2_EDCO_CACHE_TEST_A_NAMESPACE | grep $INSTANCE_NAME | grep -E 'cache-redis-0' > found_pods_tp2_cache_test_a.txt || true
+
+      if [[ -s found_pods_tp2_cache_test_a.txt ]]; then
+        echo "Pods matching $INSTANCE_NAME found in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace:"
+        cat found_pods_tp2_cache_test_a.txt
+      else
+        echo "No pods matching $INSTANCE_NAME found in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace"
+      fi
+  tags:
+    - tp2-edco-cache-test-a
+  artifacts:
+    paths:
+      - found_pods_tp2_cache_test_a.txt
+    when: always
+  except:
+    - pushes
+    - merge_requests
+
+# Stage 2: Fetch ConfigMap for cache-test namespace
+fetch_configmap_cache_test:
+  image: $KUBECTL
+  stage: fetch-configmap
+  needs:
+    - job: search_pods_cache_test
+      artifacts: true
+  script:
+    - |
+      if [[ -s found_pods_cache_test.txt ]]; then
+        echo "Fetching ConfigMap for $INSTANCE_NAME in $CACHE_TEST_NAMESPACE namespace"
+        CONFIGMAP_NAME=$(kubectl get configmaps -n $CACHE_TEST_NAMESPACE | grep "$INSTANCE_NAME-test-redis-ha-configmap" | awk '{print $1}')
+
+        if [[ ! -z "$CONFIGMAP_NAME" ]]; then
+          echo "Found ConfigMap: $CONFIGMAP_NAME"
+          # Fetch the entire ConfigMap and extract the redis.conf section until 'logfile'
+          kubectl get configmap $CONFIGMAP_NAME -n $CACHE_TEST_NAMESPACE -o yaml > full_configmap_output_cache_test.yaml
+          sed -n '/redis\.conf:/,/logfile/p' full_configmap_output_cache_test.yaml > redis_conf_output_cache_test.txt
+        else
+          echo "No ConfigMap found for $INSTANCE_NAME in $CACHE_TEST_NAMESPACE namespace"
+        fi
+      else
+        echo "No pods found in $CACHE_TEST_NAMESPACE namespace; skipping ConfigMap fetch"
+      fi
+  tags:
+    - cache-utility-test
+  artifacts:
+    paths:
+      - redis_conf_output_cache_test.txt
+    when: always
+  rules:
+    - if: '$CI_JOB_STATUS == "success"'
+
+# Stage 2: Fetch ConfigMap for tp2-edco-cache-test-a namespace
+fetch_configmap_tp2_cache_test_a:
+  image: $KUBECTL
+  stage: fetch-configmap
+  needs:
+    - job: search_pods_tp2_cache_test_a
+      artifacts: true
+  script:
+    - |
+      if [[ -s found_pods_tp2_cache_test_a.txt ]]; then
+        echo "Fetching ConfigMap for $INSTANCE_NAME in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace"
+        CONFIGMAP_NAME=$(kubectl get configmaps -n $TP2_EDCO_CACHE_TEST_A_NAMESPACE | grep "$INSTANCE_NAME-cache-redis-redis-configmap" | awk '{print $1}')
+
+        if [[ ! -z "$CONFIGMAP_NAME" ]]; then
+          echo "Found ConfigMap: $CONFIGMAP_NAME"
+          # Fetch the entire ConfigMap and extract the redis.conf section until 'logfile'
+          kubectl get configmap $CONFIGMAP_NAME -n $TP2_EDCO_CACHE_TEST_A_NAMESPACE -o yaml > full_configmap_output_tp2_cache_test_a.yaml
+          sed -n '/redis\.conf:/,/logfile/p' full_configmap_output_tp2_cache_test_a.yaml > redis_conf_output_tp2_cache_test_a.txt
+        else
+          echo "No ConfigMap found for $INSTANCE_NAME in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace"
+        fi
+      else
+        echo "No pods found in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace; skipping ConfigMap fetch"
+      fi
+  tags:
+    - tp2-edco-cache-test-a
+  artifacts:
+    paths:
+      - redis_conf_output_tp2_cache_test_a.txt
+    when: always
+  rules:
+    - if: '$CI_JOB_STATUS == "success"'
+
+# Stage 3: Collect data from found pods
+collect_data:
+  image: $KUBECTL
+  stage: collect-data
+  needs:
+    - job: search_pods_cache_test
+      artifacts: true
+    - job: search_pods_tp2_cache_test_a
+      artifacts: true
+    # Add other search_pods jobs as needed
+  script:
+    - |
+      for FILE in found_pods_*.txt; do
+        if [[ -s $FILE ]]; then
+          NAMESPACE=$(echo $FILE | sed 's/found_pods_\(.*\)\.txt/\1/')
+          echo "Processing pods in namespace: $NAMESPACE"
+          while read -r POD_NAME; do
+            echo "Collecting data for $POD_NAME in $NAMESPACE"
+            # Fetch pod description
+            kubectl describe pod $POD_NAME -n $NAMESPACE > "${POD_NAME}_description.txt" || true
+            # Fetch last 1-hour logs
+            kubectl logs $POD_NAME -n $NAMESPACE --since=1h > "${POD_NAME}_logs.txt" || true
+            # Collect redis.conf from the pod
+            kubectl exec -n $NAMESPACE $POD_NAME -- cat /path/to/redis.conf > "${POD_NAME}_redis.conf" || true
+          done < $FILE
+        else
+          echo "No pods found in $FILE"
+        fi
+      done
+  tags:
+    - common-runner  # Use an appropriate runner for collecting data
+  artifacts:
+    paths:
+      - "*.txt"
+      - "*.conf"
+    when: always
+  except:
+    - pushes
+    - merge_requests
