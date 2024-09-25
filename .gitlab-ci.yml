@@ -1,3 +1,24 @@
+function k-get-logs() {
+    read -p "Enter pod name: " POD_NAME
+    echo "Executing first command..."
+    winpty kubectl exec -it "$POD_NAME" -- sh -c 'cd ../redis_data && tail -n 500 redis-server.log'
+    if [ $? -eq 0 ]; then
+        echo "First command executed successfully"
+    else
+        echo "First command failed"
+    fi
+    echo "Executing second command..."
+    k logs pod/"$POD_NAME" -c redis
+    if [ $? -eq 0 ]; then
+        echo "Second command executed successfully"
+    else
+        echo "Second command failed"
+    fi
+}
+
+
+
+
 stages:
   - search-pod
   - fetch-configmap
