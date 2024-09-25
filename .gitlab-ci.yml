@@ -387,23 +387,22 @@ tage: ping-instances
 image: $NETSTER
 dependencies:
   - dns_lookup_cache_test
-  script: |
-    DNSNAME="$(cat DNSNAMESORTED.txt)"
-    for item in $DNSNAME; do
-      PORT_CHECK=$(nc -z -v $item 6379 2>&1) || true
-      if echo "$PORT_CHECK" | grep -q "succeeded"; then
-        PING=$( (echo ping; sleep 1) | nc -q 1 $item 6379 2>&1) || true
-        if echo "$PING" | grep -qF '+PONG'; then
-          echo "$item ping result: +PONG"
-        else
-          echo "$item ping result: Port open but no PONG response"
-        fi
-      elif echo "$PORT_CHECK" | grep -q "Connection refused"; then
-        echo "$item ping result: Connection refused"
-      else
-        echo "$item ping result: Connection failed"
-      fi
-    done
+  script:
+    - DNSNAME="$(cat DNSNAMESORTED.txt)"
+    - for item in $DNSNAME; do
+        (
+          OUTPUT=$((echo ping; sleep 1) | nc -q 1 -v $item 6379 2>&1)
+          if echo "$OUTPUT" | grep -q "+PONG"; then
+            echo "$item ping result: +PONG"
+          elif echo "$OUTPUT" | grep -q "open"; then
+            echo "$item ping result: port open"
+          elif echo "$OUTPUT" | grep -q "Connection refused"; then
+            echo "$item ping result: Connection refused"
+          else
+            echo "$item ping result: Connection failed"
+          fi
+        )
+      done
 tags:
   - cache-utility-test
 except:
