@@ -383,7 +383,27 @@ collect_data:
     - merge_requests
 
 
-
+tage: ping-instances
+image: $NETSTER
+dependencies:
+  - dns_lookup_cache_test
+script: |
+  DNSNAME="$(cat DNSNAMESORTED.txt)"
+  for item in $DNSNAME; do
+    OUTPUT=$(nc -z -v $item 6379 2>&1) || true
+    if echo "$OUTPUT" | grep -q "succeeded"; then
+      echo "$item ping result: port open"
+    elif echo "$OUTPUT" | grep -q "Connection refused"; then
+      echo "$item ping result: Connection refused"
+    else
+      echo "$item ping result: Connection failed"
+    fi
+  done
+tags:
+  - cache-utility-test
+except:
+  - pushes
+  - merge_requests
 
     the newer releases (like 6.2.12) include several bug fixes and optimizations that could improve your setup's stability, such as better memory management, Lua script garbage collection fixes, and race condition resolutions​(
 Redis
