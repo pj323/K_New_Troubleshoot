@@ -1,3 +1,52 @@
+function k-options() {
+    echo "Please select an option:"
+    echo "1) k get pods"
+    echo "2) k get pods -w"
+    echo "3) k get sts"
+    echo "4) k get configmap"
+    echo "5) k-get-logs"
+    echo "6) k get svc"
+    echo "7) k get pvc"
+    read -p "Enter the number of your choice: " choice
+
+    case $choice in
+        1)
+            echo "Executing: k get pods"
+            k get pods
+            ;;
+        2)
+            echo "Executing: k get pods -w"
+            k get pods -w
+            ;;
+        3)
+            echo "Executing: k get sts"
+            k get sts
+            ;;
+        4)
+            echo "Executing: k get configmap"
+            k get configmap
+            ;;
+        5)
+            echo "Executing: k-get-logs"
+            k-get-logs
+            ;;
+        6)
+            echo "Executing: k get svc"
+            k get svc
+            ;;
+        7)
+            echo "Executing: k get pvc"
+            k get pvc
+            ;;
+        *)
+            echo "Invalid option."
+            ;;
+    esac
+}
+
+
+
+
 function k-get-logs() {
     read -p "Enter pod name: " POD_NAME
     echo "Executing first command..."
