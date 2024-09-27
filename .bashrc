@@ -1,3 +1,97 @@
+# Function to log into clusters
+function k-login() {
+    echo "Please select the cluster to log into:"
+    echo "1) EDCO-TEST"
+    echo "2) EDCR-PROD"
+    echo "3) EDCO-PROD"
+    read -p "Enter the number of your choice: " choice
+
+    case $choice in
+        1)
+            echo "Executing: ./kubelogin_setup.sh -s -c k8s-test-edco"
+            ./kubelogin_setup.sh -s -c k8s-test-edco && echo "Logged into EDCO-TEST Successfully"
+            ;;
+        2)
+            echo "Executing: ./kubelogin_setup.sh -s -c k8s-prod-edcr"
+            ./kubelogin_setup.sh -s -c k8s-prod-edcr && echo "Logged into EDCR-PROD Successfully"
+            ;;
+        3)
+            echo "Executing: ./kubelogin_setup.sh -s -c k8s-prod-edco"
+            ./kubelogin_setup.sh -s -c k8s-prod-edco && echo "Logged into EDCO-PROD Successfully"
+            ;;
+        *)
+            echo "Invalid option."
+            ;;
+    esac
+}
+
+# Function to switch between namespaces
+function k-switch() {
+    echo "Please select the namespace to switch to:"
+    echo "1) tp2-edcb-cache-sbx-a"
+    echo "2) cache-test"
+    echo "3) cache-prep"
+    echo "4) cache-prod"
+    echo "5) cache-utility"
+    echo "6) tp2-edco-cache-test-a"
+    echo "7) tp2-edco-cache-test-b"
+    echo "8) tp2-edco-cache-test-c"
+    echo "9) tp2-edco-cache-test-d"
+    echo "10) tp2-cache-prod-a"
+    echo "11) tp2-cache-prod-b"
+    read -p "Enter the number of your choice: " choice
+
+    case $choice in
+        1)
+            echo "Executing: kubectl config set-context --current --namespace=tp2-edcb-cache-sbx-a"
+            kubectl config set-context --current --namespace=tp2-edcb-cache-sbx-a && echo "Namespace switched to tp2-edcb-cache-sbx-a Successfully"
+            ;;
+        2)
+            echo "Executing: kubectl config set-context --current --namespace=cache-test"
+            kubectl config set-context --current --namespace=cache-test && echo "Namespace switched to cache-test Successfully"
+            ;;
+        3)
+            echo "Executing: kubectl config set-context --current --namespace=cache-prep"
+            kubectl config set-context --current --namespace=cache-prep && echo "Namespace switched to cache-prep Successfully"
+            ;;
+        4)
+            echo "Executing: kubectl config set-context --current --namespace=cache-prod"
+            kubectl config set-context --current --namespace=cache-prod && echo "Namespace switched to cache-prod Successfully"
+            ;;
+        5)
+            echo "Executing: kubectl config set-context --current --namespace=cache-utility"
+            kubectl config set-context --current --namespace=cache-utility && echo "Namespace switched to cache-utility Successfully"
+            ;;
+        6)
+            echo "Executing: kubectl config set-context --current --namespace=tp2-edco-cache-test-a"
+            kubectl config set-context --current --namespace=tp2-edco-cache-test-a && echo "Namespace switched to tp2-edco-cache-test-a Successfully"
+            ;;
+        7)
+            echo "Executing: kubectl config set-context --current --namespace=tp2-edco-cache-test-b"
+            kubectl config set-context --current --namespace=tp2-edco-cache-test-b && echo "Namespace switched to tp2-edco-cache-test-b Successfully"
+            ;;
+        8)
+            echo "Executing: kubectl config set-context --current --namespace=tp2-edco-cache-test-c"
+            kubectl config set-context --current --namespace=tp2-edco-cache-test-c && echo "Namespace switched to tp2-edco-cache-test-c Successfully"
+            ;;
+        9)
+            echo "Executing: kubectl config set-context --current --namespace=tp2-edco-cache-test-d"
+            kubectl config set-context --current --namespace=tp2-edco-cache-test-d && echo "Namespace switched to tp2-edco-cache-test-d Successfully"
+            ;;
+        10)
+            echo "Executing: kubectl config set-context --current --namespace=tp2-cache-prod-a"
+            kubectl config set-context --current --namespace=tp2-cache-prod-a && echo "Namespace switched to tp2-cache-prod-a Successfully"
+            ;;
+        11)
+            echo "Executing: kubectl config set-context --current --namespace=tp2-cache-prod-b"
+            kubectl config set-context --current --namespace=tp2-cache-prod-b && echo "Namespace switched to tp2-cache-prod-b Successfully"
+            ;;
+        *)
+            echo "Invalid option."
+            ;;
+    esac
+}
+
 function k-options() {
     echo "Please select an option:"
     echo "1) kubectl get pods"
