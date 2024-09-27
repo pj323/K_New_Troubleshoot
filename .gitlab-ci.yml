@@ -1,3 +1,239 @@
+stages:
+  - search-pod
+  - fetch-configmap
+  - fetch-sts
+  - fetch-logs
+  - collect-data
+
+variables:
+  INSTANCE_NAME: "your-instance-name"  # Replace with the actual instance name
+  CACHE_TEST_NAMESPACE: "cache-test"
+  TP2_EDCO_CACHE_TEST_A_NAMESPACE: "tp2-edco-cache-test-a"
+  # Add other namespace variables as needed
+  KUBECTL: "appropriate-kubectl-image"  # Replace with your kubectl image
+
+# Stage 1: Search for pods in cache-test namespace
+search_pods_cache_test:
+  image: $KUBECTL
+  stage: search-pod
+  script:
+    - |
+      echo "Searching for pods matching $INSTANCE_NAME in $CACHE_TEST_NAMESPACE namespace"
+      kubectl get pods -n $CACHE_TEST_NAMESPACE | grep $INSTANCE_NAME | grep -E 'server-0|server-1|server-2' > found_pods_cache_test.txt || true
+
+      if [[ -s found_pods_cache_test.txt ]]; then
+        echo "Pods matching $INSTANCE_NAME found in $CACHE_TEST_NAMESPACE namespace:"
+        cat found_pods_cache_test.txt
+      else
+        echo "No pods matching $INSTANCE_NAME found in $CACHE_TEST_NAMESPACE namespace"
+      fi
+  tags:
+    - cache-utility-test
+  artifacts:
+    paths:
+      - found_pods_cache_test.txt
+    when: always
+  except:
+    - pushes
+    - merge_requests
+
+# Stage 1: Search for pods in tp2-edco-cache-test-a namespace
+search_pods_tp2_cache_test_a:
+  image: $KUBECTL
+  stage: search-pod
+  script:
+    - |
+      echo "Searching for pods matching $INSTANCE_NAME in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace"
+      kubectl get pods -n $TP2_EDCO_CACHE_TEST_A_NAMESPACE | grep $INSTANCE_NAME | grep -E 'cache-redis-0' > found_pods_tp2_cache_test_a.txt || true
+
+      if [[ -s found_pods_tp2_cache_test_a.txt ]]; then
+        echo "Pods matching $INSTANCE_NAME found in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace:"
+        cat found_pods_tp2_cache_test_a.txt
+      else
+        echo "No pods matching $INSTANCE_NAME found in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace"
+      fi
+  tags:
+    - tp2-edco-cache-test-a
+  artifacts:
+    paths:
+      - found_pods_tp2_cache_test_a.txt
+    when: always
+  except:
+    - pushes
+    - merge_requests
+
+# Stage 2: Fetch ConfigMap for cache-test namespace
+# (Unchanged from previous configuration)
+
+# Stage 3: Fetch StatefulSet for cache-test namespace
+# (Unchanged from previous configuration)
+
+# Stage 4: Fetch logs for cache-test namespace
+fetch_logs_cache_test:
+  image: $KUBECTL
+  stage: fetch-logs
+  needs:
+    - job: search_pods_cache_test
+      artifacts: true
+  script:
+    - |
+      echo "Fetching Redis logs for pods in $CACHE_TEST_NAMESPACE namespace"
+      if [[ -s found_pods_cache_test.txt ]]; then
+        while read pod_name; do
+          echo "Processing pod $pod_name"
+          # Step 1: Execute inside the pod to fetch redis-server.log
+          kubectl exec -n $CACHE_TEST_NAMESPACE $pod_name -- sh -c 'cd ../redis_data && tail -n 500 redis-server.log' > ${pod_name}_redis.log || echo "No Redis logs found for $pod_name"
+          
+          # Step 2: Fetch recent logs from the Redis container
+          kubectl logs $pod_name -n $CACHE_TEST_NAMESPACE -c redis > ${pod_name}_recent.log || echo "No recent logs found for $pod_name"
+
+          # Step 3: Execute redis-cli info replication and grep for role
+          kubectl exec -n $CACHE_TEST_NAMESPACE $pod_name -- redis-cli info replication | grep "role:" > ${pod_name}_role_info.txt || echo "No role info found for $pod_name"
+        done < found_pods_cache_test.txt
+      else
+        echo "No pods found in $CACHE_TEST_NAMESPACE namespace; skipping logs fetch"
+      fi
+  tags:
+    - cache-utility-test
+  artifacts:
+    paths:
+      - "*_redis.log"
+      - "*_recent.log"
+      - "*_role_info.txt"
+    when: always
+  except:
+    - pushes
+    - merge_requests
+
+# Stage 4: Fetch logs for tp2-edco-cache-test-a namespace
+fetch_logs_tp2_cache_test_a:
+  image: $KUBECTL
+  stage: fetch-logs
+  needs:
+    - job: search_pods_tp2_cache_test_a
+      artifacts: true
+  script:
+    - |
+      echo "Fetching Redis logs for pods in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace"
+      if [[ -s found_pods_tp2_cache_test_a.txt ]]; then
+        while read pod_name; do
+          echo "Processing pod $pod_name"
+          # Step 1: Execute inside the pod to fetch redis-server.log
+          kubectl exec -n $TP2_EDCO_CACHE_TEST_A_NAMESPACE $pod_name -- sh -c 'cd ../redis_data && tail -n 500 redis-server.log' > ${pod_name}_redis.log || echo "No Redis logs found for $pod_name"
+          
+          # Step 2: Fetch recent logs from the Redis container
+          kubectl logs $pod_name -n $TP2_EDCO_CACHE_TEST_A_NAMESPACE -c redis > ${pod_name}_recent.log || echo "No recent logs found for $pod_name"
+
+          # Step 3: Execute redis-cli info replication and grep for role
+          kubectl exec -n $TP2_EDCO_CACHE_TEST_A_NAMESPACE $pod_name -- redis-cli info replication | grep "role:" > ${pod_name}_role_info.txt || echo "No role info found for $pod_name"
+        done < found_pods_tp2_cache_test_a.txt
+      else
+        echo "No pods found in $TP2_EDCO_CACHE_TEST_A_NAMESPACE namespace; skipping logs fetch"
+      fi
+  tags:
+    - tp2-edco-cache-test-a
+  artifacts:
+    paths:
+      - "*_redis.log"
+      - "*_recent.log"
+      - "*_role_info.txt"
+    when: always
+  except:
+    - pushes
+    - merge_requests
+
+# Stage 5: Collect data and produce consolidated output
+collect_data:
+  image: $KUBECTL
+  stage: collect-data
+  needs:
+    - job: search_pods_cache_test
+      artifacts: true
+    - job: search_pods_tp2_cache_test_a
+      artifacts: true
+    - job: fetch_configmap_cache_test
+      artifacts: true
+    - job: fetch_configmap_tp2_cache_test_a
+      artifacts: true
+    - job: fetch_sts_cache_test
+      artifacts: true
+    - job: fetch_sts_tp2_cache_test_a
+      artifacts: true
+    - job: fetch_logs_cache_test
+      artifacts: true
+    - job: fetch_logs_tp2_cache_test_a
+      artifacts: true
+  script:
+    - |
+      echo "Generating consolidated report..."
+      echo "Consolidated Report for $INSTANCE_NAME" > consolidated_report.txt
+      echo "=====================================" >> consolidated_report.txt
+      echo "" >> consolidated_report.txt
+
+      # Section 1: Pods Found in Namespaces
+      # (Unchanged from previous configuration)
+
+      # Section 2: ConfigMap Details
+      # (Unchanged from previous configuration)
+
+      # Section 3: StatefulSet Details
+      # (Unchanged from previous configuration)
+
+      # Section 4: Pod Descriptions and Logs (Updated)
+      echo "Pod Descriptions and Logs:" >> consolidated_report.txt
+      for FILE in found_pods_*.txt; do
+        NAMESPACE=$(echo $FILE | sed 's/found_pods_\(.*\)\.txt/\1/')
+        if [[ -s $FILE ]]; then
+          while read -r POD_NAME; do
+            echo "- Pod: $POD_NAME in Namespace: $NAMESPACE" >> consolidated_report.txt
+            echo "  Description:" >> consolidated_report.txt
+            kubectl describe pod $POD_NAME -n $NAMESPACE >> consolidated_report.txt || echo "Error fetching description for $POD_NAME" >> consolidated_report.txt
+            echo "" >> consolidated_report.txt
+            echo "  Last 1-Hour Logs:" >> consolidated_report.txt
+            kubectl logs $POD_NAME -n $NAMESPACE --since=1h >> consolidated_report.txt || echo "Error fetching logs for $POD_NAME" >> consolidated_report.txt
+            echo "" >> consolidated_report.txt
+            echo "  redis.conf Content from Pod:" >> consolidated_report.txt
+            kubectl exec -n $NAMESPACE $POD_NAME -- cat /path/to/redis.conf >> consolidated_report.txt || echo "Error fetching redis.conf from $POD_NAME" >> consolidated_report.txt
+            echo "" >> consolidated_report.txt
+            echo "  redis-server.log (last 500 lines):" >> consolidated_report.txt
+            if [[ -f "${POD_NAME}_redis.log" ]]; then
+              cat "${POD_NAME}_redis.log" >> consolidated_report.txt
+            else
+              echo "redis-server.log not found for $POD_NAME" >> consolidated_report.txt
+            fi
+            echo "" >> consolidated_report.txt
+            echo "  Recent Redis Container Logs:" >> consolidated_report.txt
+            if [[ -f "${POD_NAME}_recent.log" ]]; then
+              cat "${POD_NAME}_recent.log" >> consolidated_report.txt
+            else
+              echo "Recent logs not found for $POD_NAME" >> consolidated_report.txt
+            fi
+            echo "" >> consolidated_report.txt
+            echo "  Redis Role Info:" >> consolidated_report.txt
+            if [[ -f "${POD_NAME}_role_info.txt" ]]; then
+              cat "${POD_NAME}_role_info.txt" >> consolidated_report.txt
+            else
+              echo "Role info not found for $POD_NAME" >> consolidated_report.txt
+            fi
+            echo "" >> consolidated_report.txt
+          done < $FILE
+        fi
+      done
+  tags:
+    - common-runner  # Use an appropriate runner for collecting data
+  artifacts:
+    paths:
+      - consolidated_report.txt
+    when: always
+  except:
+    - pushes
+    - merge_requests
+
+
+
+
+
+
 function k-options() {
     echo "Please select an option:"
     echo "1) k get pods"
